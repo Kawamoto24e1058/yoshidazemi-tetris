@@ -1,0 +1,63 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap');
+@import "tailwindcss";
+
+:root {
+  font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+}
+
+h1, h2, h3, h4, h5, h6, .font-display {
+  font-family: 'Outfit', sans-serif;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: #0b0c10;
+  color: #c5c6c7;
+  overflow-x: hidden;
+}
+
+/* スクロールバーのカスタマイズ */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #0b0c10;
+}
+::-webkit-scrollbar-thumb {
+  background: #1f2833;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #45f3ff;
+}
+
+/* カスタムアニメーション（ネオン効果など） */
+@keyframes neon-pulse {
+  0%, 100% {
+    text-shadow: 0 0 4px rgba(69, 243, 255, 0.6), 0 0 12px rgba(69, 243, 255, 0.4);
+  }
+  50% {
+    text-shadow: 0 0 8px rgba(69, 243, 255, 0.8), 0 0 20px rgba(69, 243, 255, 0.6);
+  }
+}
+
+.neon-text-cyan {
+  color: #45f3ff;
+  animation: neon-pulse 3s infinite alternate;
+}
+
+/* ガラスモルフィズム用クラス */
+.glass-panel {
+  background: rgba(31, 40, 51, 0.45);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.glass-panel-active {
+  background: rgba(31, 40, 51, 0.65);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(69, 243, 255, 0.25);
+  box-shadow: 0 0 15px rgba(69, 243, 255, 0.1);
+}
