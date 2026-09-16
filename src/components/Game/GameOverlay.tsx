@@ -34,8 +34,8 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({
           <div className="space-y-2">
             <h3 className="text-2xl font-bold text-white tracking-wide">テトリス型パズル実験</h3>
             <p className="text-sm text-slate-400 font-sans">
-              制限時間は60秒です。<br />
-              1000点（10ライン消去相当）以上でクリアとなります。<br />
+              制限時間は2分（120秒）です。<br />
+              500点（5ライン消去相当）以上でクリアとなります。<br />
               ゲーム開始ボタンを押すと即座にスタートします。
             </p>
           </div>
@@ -68,7 +68,7 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({
               {timeLeft <= 0 ? 'TIME UP!' : 'GAME OVER'}
             </h3>
             <p className="text-slate-400 text-sm">
-              {timeLeft <= 0 ? '制限時間（60秒）が経過しました。' : 'ブロックが最上部に達しました。'}
+              {timeLeft <= 0 ? '制限時間（2分）が経過しました。' : 'ブロックが最上部に達しました。'}
             </p>
           </div>
 
@@ -76,7 +76,7 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({
             <div className="text-xs text-slate-500 uppercase tracking-wider">最終スコア</div>
             <div className="text-4xl font-extrabold font-display text-white">{score} 点</div>
             <div className="text-xs text-slate-400">
-              目標: 1000点 / 結果:{' '}
+              目標: 500点 / 結果:{' '}
               <span className={success ? 'text-emerald-400 font-bold' : 'text-red-400 font-bold'}>
                 {success ? 'クリア成功' : 'クリア失敗'}
               </span>

@@ -16,10 +16,9 @@ import {
 
 export interface PlayerRecord {
   sessionDocId: string;     // 自動生成されたセッションごとの一意なID (FirestoreのドキュメントIDと同一)
-  playerId: string;         // 被験者ID (手動入力、重複可能)
-  name: string;             // 氏名
-  studentId: string;        // 学籍番号
+  playerId: string;         // 被験者ID (システムが自動採番。個人情報は扱わない)
   group: 'A' | 'B' | 'C';
+  playNumber: number;       // 同一プレイヤーIDでの通算プレイ回数 (初回は1)
   status: 'waiting' | 'playing' | 'finished' | 'disconnected';
   score: number;
   linesCleared: number;
@@ -82,17 +81,46 @@ export const useFirestore = () => {
     return `Player${String(nextCount).padStart(3, '0')}`;
   }, []);
 
+  // 1.5. 同一プレイヤーIDの過去データ取得 (初回グループの引き継ぎ・通算プレイ回数の算出用)
+  const getPlayerHistory = useCallback(async (
+    playerId: string
+  ): Promise<{ group: 'A' | 'B' | 'C' | null; playNumber: number }> => {
+    const toMillis = (ts: any): number => {
+      if (!ts) return 0;
+      if (typeof ts.toMillis === 'function') return ts.toMillis();
+      return new Date(ts).getTime();
+    };
+
+    if (isFirebaseConfigured) {
+      try {
+        const q = query(collection(db, 'players'), where('playerId', '==', playerId));
+        const snapshot = await getDocs(q);
+        if (snapshot.empty) return { group: null, playNumber: 1 };
+        const records = snapshot.docs.map((d) => d.data() as PlayerRecord);
+        records.sort((a, b) => toMillis(a.startTime) - toMillis(b.startTime));
+        return { group: records[0].group, playNumber: records.length + 1 };
+      } catch (error) {
+        console.error('Firestore fetch player history failed:', error);
+      }
+    }
+
+    // モックモード
+    const records = getMockPlayers().filter((p) => p.playerId === playerId);
+    if (records.length === 0) return { group: null, playNumber: 1 };
+    records.sort((a, b) => toMillis(a.startTime) - toMillis(b.startTime));
+    return { group: records[0].group, playNumber: records.length + 1 };
+  }, []);
+
   // 2. 新規プレイヤーデータの初期登録 (自動生成した sessionDocId を返す)
   const createPlayerRecord = useCallback(async (
     playerId: string,
-    name: string,
-    studentId: string,
-    group: 'A' | 'B' | 'C'
+    group: 'A' | 'B' | 'C',
+    playNumber: number
   ): Promise<string> => {
-    
+
     // Firestoreまたはモック用の自動ドキュメントIDの生成
     let sessionDocId = '';
-    
+
     if (isFirebaseConfigured) {
       const colRef = collection(db, 'players');
       const docRef = doc(colRef);
@@ -104,13 +132,12 @@ export const useFirestore = () => {
     const newRecord: PlayerRecord = {
       sessionDocId,
       playerId,
-      name,
-      studentId,
       group,
+      playNumber,
       status: 'waiting',
       score: 0,
       linesCleared: 0,
-      timeLeft: 60,
+      timeLeft: 120,
       success: false,
       endReason: null,
       startTime: isFirebaseConfigured ? serverTimestamp() : new Date().toISOString(),
@@ -364,6 +391,7 @@ export const useFirestore = () => {
 
   return {
     generatePlayerId,
+    getPlayerHistory,
     createPlayerRecord,
     updatePlayerLiveState,
     finalizePlayerRecord,

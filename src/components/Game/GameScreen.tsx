@@ -9,18 +9,16 @@ import type { Tetromino } from '../../types/tetris';
 interface GameScreenProps {
   playerId: string;
   sessionDocId: string;
-  name: string;
-  studentId: string;
   group: 'A' | 'B' | 'C';
+  playNumber: number;
   onGameFinished: (score: number, success: boolean) => void;
 }
 
 export const GameScreen: React.FC<GameScreenProps> = ({
   playerId,
   sessionDocId,
-  name,
-  studentId,
   group,
+  playNumber,
   onGameFinished,
 }) => {
   const {
@@ -42,7 +40,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
     isFinalizingRef.current = true;
     
     setSavingData(true);
-    const success = finalScore >= 1000;
+    const success = finalScore >= 500;
     
     try {
       await finalizePlayerRecord(sessionDocId, finalScore, lines, reason, success);
@@ -240,8 +238,8 @@ export const GameScreen: React.FC<GameScreenProps> = ({
     );
   };
 
-  // スコアが1000点(クリア目標)に到達するまでの進捗(%)
-  const progressPercent = Math.min(100, (score / 1000) * 100);
+  // スコアが500点(クリア目標)に到達するまでの進捗(%)
+  const progressPercent = Math.min(100, (score / 500) * 100);
 
   return (
     <div className="flex flex-col items-center justify-center min-h-[90vh] py-8 px-4 font-sans select-none">
@@ -252,14 +250,11 @@ export const GameScreen: React.FC<GameScreenProps> = ({
           <div className="px-3 py-1.5 bg-slate-800 rounded-lg text-slate-400 font-bold border border-slate-700 text-sm">
             ID: <span className="text-white">{playerId}</span>
           </div>
-          <div className="px-3 py-1.5 bg-slate-800 rounded-lg text-slate-400 border border-slate-700 text-sm">
-            氏名: <span className="text-white font-bold">{name}</span>
-          </div>
-          <div className="px-3 py-1.5 bg-slate-800 rounded-lg text-slate-400 border border-slate-700 text-sm">
-            学籍番号: <span className="text-white font-bold">{studentId}</span>
-          </div>
           <div className="px-3 py-1.5 bg-cyan-950/40 border border-cyan-800/40 rounded-lg text-cyan-400 font-bold text-sm">
             条件グループ: <span className="text-white font-display text-base font-extrabold">{group}</span>
+          </div>
+          <div className="px-3 py-1.5 bg-slate-800 rounded-lg text-slate-400 font-bold border border-slate-700 text-sm">
+            {playNumber}回目のプレイ
           </div>
         </div>
 
@@ -300,7 +295,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
             {/* 進捗プログレス */}
             <div className="space-y-2 pt-2 border-t border-slate-800">
               <div className="flex justify-between text-xs">
-                <span className="text-slate-400">クリア目標 (1000点)</span>
+                <span className="text-slate-400">クリア目標 (500点)</span>
                 <span className={`font-bold ${success ? 'text-emerald-400' : 'text-cyan-400'}`}>
                   {progressPercent.toFixed(0)}%
                 </span>
@@ -330,29 +325,39 @@ export const GameScreen: React.FC<GameScreenProps> = ({
         </div>
 
         {/* 中央: テトリス盤面本体 (オーバーレイを含む) */}
-        <div className="relative">
-          <Board grid={grid} currentPiece={currentPiece} gameStarted={gameStarted} />
-          
-          {/* テクニカルアクションのポップアップ演出 */}
-          {showMessage && activeMessage && (
-            <div className="absolute top-1/4 inset-x-0 z-30 flex items-center justify-center pointer-events-none animate-bounce">
-              <div className="px-6 py-2 bg-slate-950/95 border-2 border-cyan-500 rounded-full shadow-[0_0_20px_rgba(6,182,212,0.7)] backdrop-blur-md">
-                <span className="text-lg md:text-xl font-extrabold font-display text-cyan-400 tracking-wider drop-shadow-[0_0_8px_rgba(6,182,212,0.6)] uppercase">
-                  {activeMessage}
-                </span>
+        <div className="flex flex-col items-center gap-3">
+          <div className="relative">
+            <Board grid={grid} currentPiece={currentPiece} gameStarted={gameStarted} />
+
+            {/* テクニカルアクションのポップアップ演出 */}
+            {showMessage && activeMessage && (
+              <div className="absolute top-1/4 inset-x-0 z-30 flex items-center justify-center pointer-events-none animate-bounce">
+                <div className="px-6 py-2 bg-slate-950/95 border-2 border-cyan-500 rounded-full shadow-[0_0_20px_rgba(6,182,212,0.7)] backdrop-blur-md">
+                  <span className="text-lg md:text-xl font-extrabold font-display text-cyan-400 tracking-wider drop-shadow-[0_0_8px_rgba(6,182,212,0.6)] uppercase">
+                    {activeMessage}
+                  </span>
+                </div>
               </div>
-            </div>
-          )}
-          
-          <GameOverlay
-            gameStarted={gameStarted}
-            gameOver={gameOver}
-            score={score}
-            timeLeft={timeLeft}
-            success={success}
-            onStart={startGame}
-            savingData={savingData}
-          />
+            )}
+
+            <GameOverlay
+              gameStarted={gameStarted}
+              gameOver={gameOver}
+              score={score}
+              timeLeft={timeLeft}
+              success={success}
+              onStart={startGame}
+              savingData={savingData}
+            />
+          </div>
+
+          {/* 盤面下部の残り時間表示 (プレイ中に視界へ入りやすい位置) */}
+          <div className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-slate-950/90 rounded-xl border-2 border-slate-800 shadow-inner">
+            <Clock className={`w-5 h-5 ${timeLeft <= 10 ? 'text-red-500 animate-pulse' : 'text-cyan-400'}`} />
+            <span className={`text-2xl font-extrabold font-display ${timeLeft <= 10 ? 'text-red-500' : 'text-white'}`}>
+              残り {timeLeft} <span className="text-xs text-slate-500 font-normal">秒</span>
+            </span>
+          </div>
         </div>
 
         {/* 右サイドバー: NEXTピース ＆ 操作方法 */}
@@ -387,7 +392,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                 <kbd className="px-2 py-0.5 bg-slate-800 rounded border border-slate-700 text-white font-mono">→</kbd>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-slate-500">ソフトドロップ</span>
+                <span className="text-slate-500">下に落とす</span>
                 <kbd className="px-2 py-0.5 bg-slate-800 rounded border border-slate-700 text-white font-mono">↓</kbd>
               </div>
               <div className="flex items-center justify-between">
@@ -397,7 +402,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                 <kbd className="px-2 py-0.5 bg-slate-800 rounded border border-slate-700 text-white font-mono">Z</kbd>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-slate-500">ハードドロップ</span>
+                <span className="text-slate-500">より速く下に落とす</span>
                 <kbd className="px-4 py-0.5 bg-slate-800 rounded border border-slate-700 text-white font-mono text-[10px]">Space</kbd>
               </div>
             </div>

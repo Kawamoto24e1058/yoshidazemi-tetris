@@ -89,9 +89,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
 
     const headers = [
       'プレイヤーID',
-      '氏名',
-      '学籍番号',
       '条件グループ',
+      'プレイ回数',
       '状態',
       'プレイ開始時刻',
       'プレイ終了時刻',
@@ -109,9 +108,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
 
     const rows = historicalData.map((p) => [
       p.playerId,
-      p.name || '',
-      p.studentId || '',
       p.group,
+      p.playNumber ?? 1,
       p.status === 'playing' ? 'プレイ中' : p.status === 'finished' ? '完了' : p.status === 'disconnected' ? '離脱' : '待機中',
       formatTime(p.startTime),
       formatTime(p.endTime),
@@ -246,9 +244,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
 
             <div className="glass-panel p-6 rounded-2xl flex items-center justify-between">
               <div className="space-y-1">
-                <span className="text-xs text-slate-500 font-semibold uppercase tracking-wider">クリア目安到達 (1000点超)</span>
+                <span className="text-xs text-slate-500 font-semibold uppercase tracking-wider">クリア目安到達 (500点超)</span>
                 <div className="text-4xl font-extrabold text-emerald-400 font-display flex items-baseline gap-1">
-                  {activePlayers.filter(p => p.score >= 1000).length}
+                  {activePlayers.filter(p => p.score >= 500).length}
                   <span className="text-xs text-slate-400 font-normal">名</span>
                 </div>
               </div>
@@ -282,9 +280,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                       <span className="text-sm font-extrabold text-white font-display">
                         {player.playerId}
                       </span>
-                      <span className="px-2.5 py-0.5 bg-slate-800 border border-slate-700/80 rounded-lg text-xs font-bold text-cyan-400">
-                        グループ {player.group}
-                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="px-2.5 py-0.5 bg-slate-800 border border-slate-700/80 rounded-lg text-xs font-bold text-cyan-400">
+                          グループ {player.group}
+                        </span>
+                        <span className="px-2.5 py-0.5 bg-slate-800 border border-slate-700/80 rounded-lg text-xs font-bold text-slate-300">
+                          {player.playNumber ?? 1}回目
+                        </span>
+                      </div>
                     </div>
 
                     {/* スコアと残り時間 */}
@@ -304,13 +307,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                     {/* クリア目標進捗バー */}
                     <div className="space-y-1.5">
                       <div className="flex justify-between text-[10px] text-slate-500">
-                        <span>目標進捗 (1000点)</span>
-                        <span>{Math.min(100, (player.score / 1000) * 100).toFixed(0)}%</span>
+                        <span>目標進捗 (500点)</span>
+                        <span>{Math.min(100, (player.score / 500) * 100).toFixed(0)}%</span>
                       </div>
                       <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden">
                         <div
                           className="h-full bg-cyan-500 transition-all duration-300 rounded-full"
-                          style={{ width: `${Math.min(100, (player.score / 1000) * 100)}%` }}
+                          style={{ width: `${Math.min(100, (player.score / 500) * 100)}%` }}
                         />
                       </div>
                     </div>
@@ -385,9 +388,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                 <thead>
                   <tr className="bg-slate-950/60 border-b border-slate-900 text-slate-400 font-bold uppercase tracking-wider">
                     <th className="py-4 px-6">プレイヤーID</th>
-                    <th className="py-4 px-6">氏名</th>
-                    <th className="py-4 px-6">学籍番号</th>
                     <th className="py-4 px-6">条件グループ</th>
+                    <th className="py-4 px-6">プレイ回数</th>
                     <th className="py-4 px-6">ステータス</th>
                     <th className="py-4 px-6">最終スコア</th>
                     <th className="py-4 px-6">消去ライン</th>
@@ -400,7 +402,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                 <tbody className="divide-y divide-slate-900 text-slate-300">
                   {historicalData.length === 0 ? (
                     <tr>
-                      <td colSpan={11} className="py-20 text-center text-slate-500">
+                      <td colSpan={10} className="py-20 text-center text-slate-500">
                         {loadingData ? 'データをロード中...' : '蓄積データがありません。'}
                       </td>
                     </tr>
@@ -413,13 +415,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                         title="クリックして詳細画面監視"
                       >
                         <td className="py-4 px-6 font-bold text-white font-display">{p.playerId}</td>
-                        <td className="py-4 px-6 font-bold text-slate-200">{p.name || '-'}</td>
-                        <td className="py-4 px-6 font-mono text-slate-400">{p.studentId || '-'}</td>
                         <td className="py-4 px-6">
                           <span className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded font-bold font-display text-cyan-400">
                             {p.group}
                           </span>
                         </td>
+                        <td className="py-4 px-6 font-display text-slate-300">{p.playNumber ?? 1}回目</td>
                         <td className="py-4 px-6">
                           {p.status === 'playing' && (
                             <span className="text-cyan-400 font-bold flex items-center gap-1">
@@ -489,14 +490,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                 <h3 className="text-2xl font-extrabold text-white font-display leading-none">
                   {selectedPlayerData?.playerId || '取得中...'}
                 </h3>
-                <div className="text-sm font-bold text-slate-200">
-                  {selectedPlayerData?.name || '-'}
-                </div>
-                <div className="text-xs font-mono text-slate-400">
-                  学籍番号: {selectedPlayerData?.studentId || '-'}
-                </div>
-                <div className="inline-block px-3 py-1 bg-cyan-950/40 border border-cyan-800/40 text-cyan-400 rounded-lg text-xs font-bold mt-1">
-                  グループ {selectedPlayerData?.group || '-'}
+                <div className="flex items-center gap-1.5 mt-1">
+                  <div className="inline-block px-3 py-1 bg-cyan-950/40 border border-cyan-800/40 text-cyan-400 rounded-lg text-xs font-bold">
+                    グループ {selectedPlayerData?.group || '-'}
+                  </div>
+                  <div className="inline-block px-3 py-1 bg-slate-900/50 border border-slate-800 text-slate-300 rounded-lg text-xs font-bold">
+                    {selectedPlayerData?.playNumber ?? 1}回目
+                  </div>
                 </div>
               </div>
 
@@ -536,7 +536,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                 <div className="p-3 bg-slate-950/30 rounded-xl border border-slate-950">
                   <div className="text-[9px] text-slate-500 uppercase">残り時間</div>
                   <div className="text-lg font-bold font-display text-white">
-                    {selectedPlayerData?.timeLeft ?? 60}秒
+                    {selectedPlayerData?.timeLeft ?? 120}秒
                   </div>
                 </div>
               </div>

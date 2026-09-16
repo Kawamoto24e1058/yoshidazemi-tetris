@@ -7,7 +7,7 @@ import { Play, Sparkles, Settings, Users, Shuffle, RefreshCw, Loader2 } from 'lu
 type FlowState = 'login' | 'game' | 'result';
 
 export const PlayerFlow: React.FC = () => {
-  const { generatePlayerId, createPlayerRecord } = useFirestore();
+  const { generatePlayerId, getPlayerHistory, createPlayerRecord } = useFirestore();
 
   const [flowState, setFlowState] = useState<FlowState>('login');
   const [playerId, setPlayerId] = useState<string>(() => {
@@ -19,10 +19,7 @@ export const PlayerFlow: React.FC = () => {
 
   // 二重実行防止ロック用
   const isInitializingRef = useRef(false);
-  
-  // 被験者プロフィール入力用
-  const [name, setName] = useState<string>('');
-  const [studentId, setStudentId] = useState<string>('');
+
   const [sessionDocId, setSessionDocId] = useState<string>('');
   
   // グループ割り当て方法 ('random' | 'manual')
@@ -31,6 +28,11 @@ export const PlayerFlow: React.FC = () => {
   const [selectedGroup, setSelectedGroup] = useState<'A' | 'B' | 'C'>('A');
   // 決定された最終グループ
   const [finalGroup, setFinalGroup] = useState<'A' | 'B' | 'C'>('A');
+
+  // 同一プレイヤーIDの過去データ（初回グループの引き継ぎ・通算プレイ回数の表示用）
+  const [previousGroup, setPreviousGroup] = useState<'A' | 'B' | 'C' | null>(null);
+  const [playNumber, setPlayNumber] = useState<number>(1);
+  const [loadingHistory, setLoadingHistory] = useState<boolean>(false);
 
   // ゲーム結果の保持
   const [gameResult, setGameResult] = useState<{ score: number; success: boolean } | null>(null);
@@ -75,15 +77,47 @@ export const PlayerFlow: React.FC = () => {
     }
   }, [flowState, initPlayerId]);
 
+  // プレイヤーIDが確定/変更されるたびに過去データ（初回グループ・通算プレイ回数）を取得
+  useEffect(() => {
+    if (!playerId || loadingId) return;
+
+    let cancelled = false;
+    setLoadingHistory(true);
+
+    getPlayerHistory(playerId)
+      .then((history) => {
+        if (cancelled) return;
+        setPreviousGroup(history.group);
+        setPlayNumber(history.playNumber);
+        if (history.group) {
+          setFinalGroup(history.group);
+        }
+      })
+      .catch((error) => {
+        console.error('Failed to fetch player history:', error);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingHistory(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [playerId, loadingId, getPlayerHistory]);
+
   // スタートボタン押下処理
   const handleStartGame = async () => {
-    if (!playerId.trim() || !name.trim() || !studentId.trim()) return;
+    if (!playerId.trim()) return;
 
-    let group: 'A' | 'B' | 'C' = selectedGroup;
-    
-    if (assignmentType === 'random') {
+    // 同一プレイヤーIDの過去プレイがある場合は、初回に割り当てられたグループを引き継ぐ
+    let group: 'A' | 'B' | 'C';
+    if (previousGroup) {
+      group = previousGroup;
+    } else if (assignmentType === 'random') {
       const groups: ('A' | 'B' | 'C')[] = ['A', 'B', 'C'];
       group = groups[Math.floor(Math.random() * groups.length)];
+    } else {
+      group = selectedGroup;
     }
 
     setFinalGroup(group);
@@ -92,9 +126,8 @@ export const PlayerFlow: React.FC = () => {
       // Firestoreに初期プレイヤーデータを登録し、sessionDocId を取得
       const docId = await createPlayerRecord(
         playerId.trim(),
-        name.trim(),
-        studentId.trim(),
-        group
+        group,
+        playNumber
       );
       setSessionDocId(docId);
       setFlowState('game');
@@ -115,8 +148,6 @@ export const PlayerFlow: React.FC = () => {
   // 再起動 (次のプレイヤー - IDはクリアせず保持)
   const handleRestart = () => {
     setGameResult(null);
-    setName('');
-    setStudentId('');
     setSessionDocId('');
     setFlowState('login');
   };
@@ -160,9 +191,14 @@ export const PlayerFlow: React.FC = () => {
                     <span>ID取得中...</span>
                   </div>
                 ) : (
-                  <span className="text-xl font-bold font-display text-white tracking-wide">
-                    {playerId}
-                  </span>
+                  <div className="flex flex-col items-end gap-0.5">
+                    <span className="text-xl font-bold font-display text-white tracking-wide">
+                      {playerId}
+                    </span>
+                    <span className="text-[10px] text-cyan-400 font-bold">
+                      {loadingHistory ? '確認中...' : `${playNumber}回目のプレイ`}
+                    </span>
+                  </div>
                 )}
                 
                 <button
@@ -178,94 +214,81 @@ export const PlayerFlow: React.FC = () => {
               </div>
             </div>
 
-            {/* 被験者プロフィール入力フォーム */}
-            <div className="space-y-4 py-2">
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block">
-                  氏名（フルネーム）
-                </label>
-                <input
-                  type="text"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="例: 山田 太郎"
-                  className="w-full py-2.5 px-4 bg-slate-950/80 rounded-xl border border-slate-800 text-sm text-white focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition-all font-sans"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block">
-                  学籍番号
-                </label>
-                <input
-                  type="text"
-                  value={studentId}
-                  onChange={(e) => setStudentId(e.target.value)}
-                  placeholder="例: 12345678"
-                  className="w-full py-2.5 px-4 bg-slate-950/80 rounded-xl border border-slate-800 text-sm text-white focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition-all font-sans"
-                />
-              </div>
-            </div>
-
             {/* 実験グループ割り当てトグル (実験者操作用) */}
             <div className="space-y-4">
-              <div className="flex justify-between items-center">
-                <span className="text-sm font-medium text-slate-400 flex items-center gap-1.5">
-                  <Settings className="w-4 h-4 text-slate-500" />
-                  条件グループの割り当て方法
-                </span>
-                
-                {/* トグルスイッチ */}
-                <div className="flex bg-slate-900 p-1 rounded-xl border border-slate-800/80">
-                  <button
-                    type="button"
-                    onClick={() => setAssignmentType('random')}
-                    className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                      assignmentType === 'random'
-                        ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-slate-950 shadow-md'
-                        : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    <Shuffle className="w-3 h-3" />
-                    ランダム
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setAssignmentType('manual')}
-                    className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                      assignmentType === 'manual'
-                        ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-slate-950 shadow-md'
-                        : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    <Users className="w-3 h-3" />
-                    手動指定
-                  </button>
-                </div>
-              </div>
-
-              {/* 手動指定の場合のグループボタン */}
-              {assignmentType === 'manual' ? (
-                <div className="grid grid-cols-3 gap-3 pt-2 animate-slide-down">
-                  {(['A', 'B', 'C'] as const).map((g) => (
-                    <button
-                      key={g}
-                      onClick={() => setSelectedGroup(g)}
-                      className={`py-3 px-4 rounded-xl border font-bold text-sm transition-all cursor-pointer flex flex-col items-center gap-0.5 ${
-                        selectedGroup === g
-                          ? 'bg-cyan-950/40 border-cyan-500 text-cyan-400 shadow-[0_0_12px_rgba(6,182,212,0.15)]'
-                          : 'bg-slate-900/40 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-white'
-                      }`}
-                    >
-                      <span className="text-[10px] text-slate-500 font-normal uppercase">グループ</span>
-                      <span className="text-lg font-extrabold font-display">{g}</span>
-                    </button>
-                  ))}
+              {previousGroup ? (
+                <div className="space-y-2">
+                  <span className="text-sm font-medium text-slate-400 flex items-center gap-1.5">
+                    <Settings className="w-4 h-4 text-slate-500" />
+                    条件グループの割り当て方法
+                  </span>
+                  <div className="p-3 bg-cyan-950/30 border border-cyan-800/40 rounded-xl text-center text-xs text-cyan-300">
+                    このプレイヤーIDは初回プレイ時にグループ{' '}
+                    <span className="font-extrabold text-white">{previousGroup}</span>{' '}
+                    に割り当てられています。同一プレイヤーのため、今回も同じグループでプレイします。
+                  </div>
                 </div>
               ) : (
-                <div className="p-3 bg-slate-900/30 border border-slate-800/40 rounded-xl text-center text-xs text-slate-500">
-                  ゲーム開始時にシステムが自動的にグループ (A/B/C) を均等に割り当てます。
-                </div>
+                <>
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm font-medium text-slate-400 flex items-center gap-1.5">
+                      <Settings className="w-4 h-4 text-slate-500" />
+                      条件グループの割り当て方法
+                    </span>
+
+                    {/* トグルスイッチ */}
+                    <div className="flex bg-slate-900 p-1 rounded-xl border border-slate-800/80">
+                      <button
+                        type="button"
+                        onClick={() => setAssignmentType('random')}
+                        className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                          assignmentType === 'random'
+                            ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-slate-950 shadow-md'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        <Shuffle className="w-3 h-3" />
+                        ランダム
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAssignmentType('manual')}
+                        className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                          assignmentType === 'manual'
+                            ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-slate-950 shadow-md'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        <Users className="w-3 h-3" />
+                        手動指定
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 手動指定の場合のグループボタン */}
+                  {assignmentType === 'manual' ? (
+                    <div className="grid grid-cols-3 gap-3 pt-2 animate-slide-down">
+                      {(['A', 'B', 'C'] as const).map((g) => (
+                        <button
+                          key={g}
+                          onClick={() => setSelectedGroup(g)}
+                          className={`py-3 px-4 rounded-xl border font-bold text-sm transition-all cursor-pointer flex flex-col items-center gap-0.5 ${
+                            selectedGroup === g
+                              ? 'bg-cyan-950/40 border-cyan-500 text-cyan-400 shadow-[0_0_12px_rgba(6,182,212,0.15)]'
+                              : 'bg-slate-900/40 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-white'
+                          }`}
+                        >
+                          <span className="text-[10px] text-slate-500 font-normal uppercase">グループ</span>
+                          <span className="text-lg font-extrabold font-display">{g}</span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="p-3 bg-slate-900/30 border border-slate-800/40 rounded-xl text-center text-xs text-slate-500">
+                      ゲーム開始時にシステムが自動的にグループ (A/B/C) を均等に割り当てます。
+                    </div>
+                  )}
+                </>
               )}
             </div>
 
@@ -275,9 +298,9 @@ export const PlayerFlow: React.FC = () => {
           <div className="space-y-4">
             <button
               onClick={handleStartGame}
-              disabled={!playerId.trim() || !name.trim() || !studentId.trim()}
+              disabled={!playerId.trim()}
               className={`w-full py-4.5 px-6 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 font-extrabold rounded-2xl shadow-[0_0_25px_rgba(6,182,212,0.3)] transition-all hover:scale-[1.01] active:scale-[0.99] flex items-center justify-center gap-2 text-lg ${
-                !playerId.trim() || !name.trim() || !studentId.trim()
+                !playerId.trim()
                   ? 'opacity-40 cursor-not-allowed'
                   : 'cursor-pointer'
               }`}
@@ -286,7 +309,7 @@ export const PlayerFlow: React.FC = () => {
               実験ゲームを開始する
             </button>
             <div className="text-center text-[10px] text-slate-500 leading-relaxed font-sans">
-              ※開始ボタンを押すと、60秒の制限時間付きパズルゲームが始まります。<br />
+              ※開始ボタンを押すと、2分（120秒）の制限時間付きパズルゲームが始まります。<br />
               キーボード入力（矢印キー、Zキー、Spaceキー）を使用するため、PCでの操作を行ってください。
             </div>
           </div>
@@ -298,9 +321,8 @@ export const PlayerFlow: React.FC = () => {
         <GameScreen
           playerId={playerId}
           sessionDocId={sessionDocId}
-          name={name}
-          studentId={studentId}
           group={finalGroup}
+          playNumber={playNumber}
           onGameFinished={handleGameFinished}
         />
       )}
@@ -309,6 +331,7 @@ export const PlayerFlow: React.FC = () => {
         <ResultScreen
           playerId={playerId}
           group={finalGroup}
+          playNumber={playNumber}
           score={gameResult.score}
           success={gameResult.success}
           onRestart={handleRestart}

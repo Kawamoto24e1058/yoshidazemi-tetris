@@ -4,6 +4,7 @@ import { Trophy, ArrowRight, CheckCircle, AlertTriangle } from 'lucide-react';
 interface ResultScreenProps {
   playerId: string;
   group: 'A' | 'B' | 'C';
+  playNumber: number;
   score: number;
   success: boolean;
   onRestart: () => void;
@@ -12,6 +13,7 @@ interface ResultScreenProps {
 export const ResultScreen: React.FC<ResultScreenProps> = ({
   playerId,
   group,
+  playNumber,
   score,
   success,
   onRestart,
@@ -59,6 +61,10 @@ export const ResultScreen: React.FC<ResultScreenProps> = ({
             <span className="text-xs text-slate-500 uppercase tracking-wider">実験条件グループ</span>
             <div className="text-lg font-extrabold text-cyan-400 font-display">{group}</div>
           </div>
+          <div className="py-4 space-y-1">
+            <span className="text-xs text-slate-500 uppercase tracking-wider">通算プレイ回数</span>
+            <div className="text-lg font-extrabold text-white font-display">{playNumber}回目</div>
+          </div>
           <div className="pt-4 space-y-1">
             <span className="text-xs text-slate-500 uppercase tracking-wider">最終スコア実績</span>
             <div className="text-3xl font-extrabold text-white font-display flex items-center justify-center gap-2">
@@ -66,7 +72,7 @@ export const ResultScreen: React.FC<ResultScreenProps> = ({
               {score} 点
             </div>
             <div className="text-[11px] text-slate-500">
-              目標スコア: 1000点
+              目標スコア: 500点
             </div>
           </div>
         </div>

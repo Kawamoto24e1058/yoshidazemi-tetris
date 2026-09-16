@@ -1,0 +1,71 @@
+rules_version = '2';
+
+// ⚠️ 重要: このファイルは「players」「counters/players」専用のルール案です。
+// Firebaseプロジェクト "nomimane" は本アプリ専用ではなく他アプリと共用のため、
+// このファイルをそのまま「置き換え」でデプロイすると、他アプリが使っている
+// コレクションのルールが失われ、そちらが動かなくなる可能性があります。
+// 必ず Firebase コンソール → Firestore Database → ルール で
+// 現在の内容を確認し、下記の match ブロックを "追加" する形でマージしてください。
+// (nomimaneプロジェクトがFirestoreを使っているのがこのTetrisアプリだけなら、
+//  そのまま置き換えても問題ありません)
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 実験参加者のプレイ記録
+    match /players/{sessionId} {
+
+      // 新規プレイヤー登録 (ゲーム開始前に1回だけ作成される)
+      // 想定通りの形・初期値のデータのみ作成を許可し、不正な初期データ投入を防ぐ
+      // 氏名・学籍番号など個人を特定できる情報は保存しない設計にしている
+      allow create: if request.resource.data.sessionDocId == sessionId
+                    && request.resource.data.group in ['A', 'B', 'C']
+                    && request.resource.data.status == 'waiting'
+                    && request.resource.data.score == 0
+                    && request.resource.data.linesCleared == 0
+                    && request.resource.data.success == false
+                    && request.resource.data.endReason == null
+                    && request.resource.data.playNumber is int
+                    && request.resource.data.playNumber >= 1
+                    && request.resource.data.playerId is string;
+
+      // プレイ中/終了時の更新
+      // ・進行状況に関するフィールドのみ変更を許可
+      // ・プレイヤーID/グループ/プレイ回数/開始時刻など「身元」に関わる
+      //   フィールドは登録後に書き換えられないようにする（なりすまし・グループ改ざん防止）
+      // ・スコアは型と現実的な上限のみチェック（対戦相手のいない1人プレイのため、
+      //   何点が「正しい」かは検証できない点に注意。悪意ある高得点の完全防止はできない）
+      allow update: if request.resource.data.diff(resource.data).affectedKeys()
+                        .hasOnly(['score', 'linesCleared', 'timeLeft', 'gridJson',
+                                  'currentPieceJson', 'status', 'endReason', 'endTime',
+                                  'lastActive', 'success'])
+                    && request.resource.data.playerId == resource.data.playerId
+                    && request.resource.data.group == resource.data.group
+                    && request.resource.data.playNumber == resource.data.playNumber
+                    && request.resource.data.sessionDocId == resource.data.sessionDocId
+                    && request.resource.data.score is int
+                    && request.resource.data.score >= 0
+                    && request.resource.data.score <= 5000;
+
+      // 実験データなので削除は不可
+      allow delete: if false;
+
+      // 読み取り:
+      // このアプリはログイン機能(Firebase Authentication)を持たないため、
+      // 「管理者だけ読める」と「参加者は読めない」をルール上で区別できません。
+      // ただし氏名・学籍番号は保存していないため、漏れても playerId・グループ・
+      // スコアなど匿名化されたデータのみで、個人情報の流出には当たりません。
+      allow read: if true;
+    }
+
+    // プレイヤー番号自動採番用カウンター
+    match /counters/players {
+      allow get: if true;
+      allow create: if request.resource.data.keys().hasOnly(['count'])
+                    && request.resource.data.count == 1;
+      allow update: if request.resource.data.keys().hasOnly(['count'])
+                    && request.resource.data.count == resource.data.count + 1;
+      allow delete: if false;
+    }
+  }
+}

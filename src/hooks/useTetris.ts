@@ -56,18 +56,42 @@ const COLORS: Record<TetrominoType, string> = {
 const createEmptyGrid = (): Grid =>
   Array.from({ length: ROWS }, () => Array(COLS).fill(''));
 
-const getRandomPiece = (): Tetromino => {
-  const types: TetrominoType[] = ['I', 'O', 'T', 'S', 'Z', 'J', 'L'];
-  const type = types[Math.floor(Math.random() * types.length)];
+const ALL_TYPES: TetrominoType[] = ['I', 'O', 'T', 'S', 'Z', 'J', 'L'];
+
+const buildPiece = (type: TetrominoType): Tetromino => {
   const matrix = SHAPES[type];
   const color = COLORS[type];
-  
+
   const position: Point = {
     x: Math.floor((COLS - matrix[0].length) / 2),
     y: type === 'I' ? -1 : 0,
   };
 
   return { type, matrix, position, color };
+};
+
+const shuffle = (types: TetrominoType[]): TetrominoType[] => {
+  const result = [...types];
+  for (let i = result.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [result[i], result[j]] = [result[j], result[i]];
+  }
+  return result;
+};
+
+// 7種のミノを1袋ずつ均等に出す「7-bag」方式。
+// 完全ランダムだと同じミノが連続する可能性があり、実験の「難易度固定」の妨げになるため採用。
+const createPieceBag = () => {
+  let bag: TetrominoType[] = [];
+  return {
+    next: (): Tetromino => {
+      if (bag.length === 0) {
+        bag = shuffle(ALL_TYPES);
+      }
+      const type = bag.pop()!;
+      return buildPiece(type);
+    },
+  };
 };
 
 interface UseTetrisProps {
@@ -91,15 +115,17 @@ interface TetrisState {
 }
 
 export const useTetris = ({ onGameEnd, onStateUpdate }: UseTetrisProps) => {
+  const pieceBagRef = useRef(createPieceBag());
+
   const [state, setState] = useState<TetrisState>(() => ({
     grid: createEmptyGrid(),
-    currentPiece: getRandomPiece(),
-    nextPiece: getRandomPiece(),
+    currentPiece: pieceBagRef.current.next(),
+    nextPiece: pieceBagRef.current.next(),
     score: 0,
     linesCleared: 0,
     gameOver: false,
     gameStarted: false,
-    timeLeft: 60,
+    timeLeft: 120,
     comboCount: -1,
     lastActionWasRotate: false,
     actionMessage: '',
@@ -165,9 +191,11 @@ export const useTetris = ({ onGameEnd, onStateUpdate }: UseTetrisProps) => {
 
   // ゲームの初期化/開始
   const startGame = useCallback(() => {
-    const firstPiece = getRandomPiece();
-    const secondPiece = getRandomPiece();
-    
+    // 新しいゲームごとに袋をリセットし、毎回同じ条件でスタートできるようにする
+    pieceBagRef.current = createPieceBag();
+    const firstPiece = pieceBagRef.current.next();
+    const secondPiece = pieceBagRef.current.next();
+
     setState({
       grid: createEmptyGrid(),
       currentPiece: firstPiece,
@@ -176,7 +204,7 @@ export const useTetris = ({ onGameEnd, onStateUpdate }: UseTetrisProps) => {
       linesCleared: 0,
       gameOver: false,
       gameStarted: true,
-      timeLeft: 60,
+      timeLeft: 120,
       comboCount: -1,
       lastActionWasRotate: false,
       actionMessage: 'START!',
@@ -350,7 +378,7 @@ export const useTetris = ({ onGameEnd, onStateUpdate }: UseTetrisProps) => {
 
         // 次のピースセット
         const next = prev.nextPiece;
-        const upcoming = getRandomPiece();
+        const upcoming = pieceBagRef.current.next();
 
         // 初期位置での衝突＝ゲームオーバー
         if (checkCollision(next, filteredGrid)) {
@@ -496,7 +524,7 @@ export const useTetris = ({ onGameEnd, onStateUpdate }: UseTetrisProps) => {
       const nextLines = prev.linesCleared + cleared;
 
       const next = prev.nextPiece;
-      const upcoming = getRandomPiece();
+      const upcoming = pieceBagRef.current.next();
 
       if (checkCollision(next, filteredGrid)) {
         return {
@@ -535,7 +563,7 @@ export const useTetris = ({ onGameEnd, onStateUpdate }: UseTetrisProps) => {
     return () => clearInterval(id);
   }, [state.gameStarted, state.gameOver, moveDown]);
 
-  // 2. 60秒制限時間タイマー
+  // 2. 制限時間タイマー (120秒)
   useEffect(() => {
     if (!state.gameStarted || state.gameOver) return;
 
@@ -594,7 +622,7 @@ export const useTetris = ({ onGameEnd, onStateUpdate }: UseTetrisProps) => {
     timeLeft: state.timeLeft,
     actionMessage: state.actionMessage,
     messageTrigger: state.messageTrigger,
-    success: state.score >= 1000,
+    success: state.score >= 500,
     startGame,
     moveLeft,
     moveRight,
