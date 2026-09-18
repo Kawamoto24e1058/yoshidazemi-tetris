@@ -86,11 +86,6 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onAuthorized }) => {
           </button>
         </form>
 
-        <div className="text-center text-[10px] text-slate-500 font-sans">
-          デフォルトパスワードは <code>admin123</code> です。<br />
-          本番環境では <code>VITE_ADMIN_PASSWORD</code> 環境変数を設定してください。
-        </div>
-
       </div>
     </div>
   );
