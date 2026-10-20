@@ -13,6 +13,9 @@ import {
   orderBy,
   runTransaction,
 } from 'firebase/firestore';
+import { TIME_LIMIT_SECONDS } from '../config/gameConfig';
+
+export type EndReason = 'timeout' | 'gameover' | 'cleared' | 'disconnected';
 
 export interface PlayerRecord {
   sessionDocId: string;     // 自動生成されたセッションごとの一意なID (FirestoreのドキュメントIDと同一)
@@ -24,7 +27,7 @@ export interface PlayerRecord {
   linesCleared: number;
   timeLeft: number;
   success: boolean;
-  endReason: 'timeout' | 'gameover' | 'disconnected' | null;
+  endReason: EndReason | null;
   startTime: any; // Timestamp or Date string
   endTime: any;
   lastActive: any;
@@ -47,6 +50,27 @@ const getMockPlayers = (): PlayerRecord[] => {
 const saveMockPlayers = (players: PlayerRecord[]) => {
   localStorage.setItem(MOCK_PLAYERS_KEY, JSON.stringify(players));
   window.dispatchEvent(new CustomEvent('mock-db-update'));
+};
+
+const toMillis = (ts: any): number => {
+  if (!ts) return 0;
+  if (typeof ts.toMillis === 'function') return ts.toMillis();
+  if (typeof ts.seconds === 'number') return ts.seconds * 1000;
+  return new Date(ts).getTime();
+};
+
+// 離脱・ブラウザ終了などで終了処理が走らなかった記録は status が
+// 「プレイ中/待機中」のまま残る。プレイ中は1秒ごとに lastActive が更新されるため、
+// 一定時間更新がなければ離脱として扱う（表示・CSV用。DBは書き換えない）。
+const STALE_AFTER_MS = 3 * 60 * 1000;
+
+export const withEffectiveStatus = (p: PlayerRecord): PlayerRecord => {
+  if (p.status !== 'playing' && p.status !== 'waiting') return p;
+  const last = toMillis(p.lastActive) || toMillis(p.startTime);
+  if (last && Date.now() - last > STALE_AFTER_MS) {
+    return { ...p, status: 'disconnected', endReason: p.endReason ?? 'disconnected' };
+  }
+  return p;
 };
 
 export const useFirestore = () => {
@@ -82,33 +106,26 @@ export const useFirestore = () => {
   }, []);
 
   // 1.5. 同一プレイヤーIDの過去データ取得 (初回グループの引き継ぎ・通算プレイ回数の算出用)
+  // 取得に失敗した場合は「初回プレイ」扱いにせず例外を投げる（グループが再抽選されるのを防ぐ）。
   const getPlayerHistory = useCallback(async (
     playerId: string
   ): Promise<{ group: 'A' | 'B' | 'C' | null; playNumber: number }> => {
-    const toMillis = (ts: any): number => {
-      if (!ts) return 0;
-      if (typeof ts.toMillis === 'function') return ts.toMillis();
-      return new Date(ts).getTime();
-    };
-
+    let records: PlayerRecord[];
     if (isFirebaseConfigured) {
-      try {
-        const q = query(collection(db, 'players'), where('playerId', '==', playerId));
-        const snapshot = await getDocs(q);
-        if (snapshot.empty) return { group: null, playNumber: 1 };
-        const records = snapshot.docs.map((d) => d.data() as PlayerRecord);
-        records.sort((a, b) => toMillis(a.startTime) - toMillis(b.startTime));
-        return { group: records[0].group, playNumber: records.length + 1 };
-      } catch (error) {
-        console.error('Firestore fetch player history failed:', error);
-      }
+      const q = query(collection(db, 'players'), where('playerId', '==', playerId));
+      const snapshot = await getDocs(q);
+      records = snapshot.docs.map((d) => d.data() as PlayerRecord);
+    } else {
+      records = getMockPlayers().filter((p) => p.playerId === playerId);
     }
 
-    // モックモード
-    const records = getMockPlayers().filter((p) => p.playerId === playerId);
     if (records.length === 0) return { group: null, playNumber: 1 };
+
+    // グループは「最初に割り当てられたもの」を採用 (開始前に離脱した記録も含める)
     records.sort((a, b) => toMillis(a.startTime) - toMillis(b.startTime));
-    return { group: records[0].group, playNumber: records.length + 1 };
+    // プレイ回数は実際にゲームを開始した記録のみ数える (開始ボタン前に離れた「待機中」は除外)
+    const startedCount = records.filter((r) => r.status !== 'waiting').length;
+    return { group: records[0].group, playNumber: startedCount + 1 };
   }, []);
 
   // 2. 新規プレイヤーデータの初期登録 (自動生成した sessionDocId を返す)
@@ -137,7 +154,7 @@ export const useFirestore = () => {
       status: 'waiting',
       score: 0,
       linesCleared: 0,
-      timeLeft: 120,
+      timeLeft: TIME_LIMIT_SECONDS,
       success: false,
       endReason: null,
       startTime: isFirebaseConfigured ? serverTimestamp() : new Date().toISOString(),
@@ -207,7 +224,7 @@ export const useFirestore = () => {
     sessionDocId: string,
     score: number,
     linesCleared: number,
-    endReason: 'timeout' | 'gameover' | 'disconnected',
+    endReason: EndReason,
     success: boolean
   ) => {
     const finalData = {

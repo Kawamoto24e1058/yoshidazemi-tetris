@@ -1,9 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Grid, Tetromino, TetrominoType, Point } from '../types/tetris';
+import { CLEAR_SCORE, POINTS_PER_LINE, TIME_LIMIT_SECONDS } from '../config/gameConfig';
 
 const COLS = 10;
 const ROWS = 20;
 const DROP_INTERVAL = 800; // ブロックの落下速度 (すべてのグループで800msに固定)
+
+export type GameEndReason = 'timeout' | 'gameover' | 'cleared';
 
 const SHAPES: Record<TetrominoType, number[][]> = {
   I: [
@@ -53,6 +56,13 @@ const COLORS: Record<TetrominoType, string> = {
   L: 'bg-orange-500 border-orange-400 shadow-[0_0_8px_rgba(249,115,22,0.6)]',
 };
 
+const LINE_CLEAR_MESSAGES: Record<number, string> = {
+  1: 'SINGLE',
+  2: 'DOUBLE!',
+  3: 'TRIPLE!!',
+  4: 'TETRIS!!!',
+};
+
 const createEmptyGrid = (): Grid =>
   Array.from({ length: ROWS }, () => Array(COLS).fill(''));
 
@@ -81,21 +91,23 @@ const shuffle = (types: TetrominoType[]): TetrominoType[] => {
 
 // 7種のミノを1袋ずつ均等に出す「7-bag」方式。
 // 完全ランダムだと同じミノが連続する可能性があり、実験の「難易度固定」の妨げになるため採用。
-const createPieceBag = () => {
-  let bag: TetrominoType[] = [];
+// 袋の中身はstateとして持ち、更新関数を純粋に保つ (StrictModeの二重実行でも袋が狂わない)。
+const drawFromBag = (bag: TetrominoType[]): { piece: Tetromino; bag: TetrominoType[] } => {
+  const source = bag.length > 0 ? bag : shuffle(ALL_TYPES);
   return {
-    next: (): Tetromino => {
-      if (bag.length === 0) {
-        bag = shuffle(ALL_TYPES);
-      }
-      const type = bag.pop()!;
-      return buildPiece(type);
-    },
+    piece: buildPiece(source[source.length - 1]),
+    bag: source.slice(0, -1),
   };
 };
 
+const createInitialPieces = () => {
+  const first = drawFromBag([]);
+  const second = drawFromBag(first.bag);
+  return { currentPiece: first.piece, nextPiece: second.piece, bag: second.bag };
+};
+
 interface UseTetrisProps {
-  onGameEnd: (reason: 'timeout' | 'gameover', finalScore: number, lines: number) => void;
+  onGameEnd: (reason: GameEndReason, finalScore: number, lines: number) => void;
   onStateUpdate?: (score: number, lines: number, timeLeft: number) => void;
 }
 
@@ -103,34 +115,32 @@ interface TetrisState {
   grid: Grid;
   currentPiece: Tetromino;
   nextPiece: Tetromino;
+  bag: TetrominoType[];
   score: number;
   linesCleared: number;
   gameOver: boolean;
   gameStarted: boolean;
+  endReason: GameEndReason | null;
   timeLeft: number;
-  comboCount: number;             // COMBO数 (連続ライン消去で増加。初期値: -1)
-  lastActionWasRotate: boolean;   // 直前のキー操作が回転だったか (Tスピン用)
   actionMessage: string;          // 画面表示用エフェクトメッセージ
   messageTrigger: number;         // エフェクト発火検知用カウンター
 }
 
-export const useTetris = ({ onGameEnd, onStateUpdate }: UseTetrisProps) => {
-  const pieceBagRef = useRef(createPieceBag());
+const createInitialState = (gameStarted: boolean): TetrisState => ({
+  grid: createEmptyGrid(),
+  ...createInitialPieces(),
+  score: 0,
+  linesCleared: 0,
+  gameOver: false,
+  gameStarted,
+  endReason: null,
+  timeLeft: TIME_LIMIT_SECONDS,
+  actionMessage: gameStarted ? 'START!' : '',
+  messageTrigger: gameStarted ? Date.now() : 0,
+});
 
-  const [state, setState] = useState<TetrisState>(() => ({
-    grid: createEmptyGrid(),
-    currentPiece: pieceBagRef.current.next(),
-    nextPiece: pieceBagRef.current.next(),
-    score: 0,
-    linesCleared: 0,
-    gameOver: false,
-    gameStarted: false,
-    timeLeft: 120,
-    comboCount: -1,
-    lastActionWasRotate: false,
-    actionMessage: '',
-    messageTrigger: 0,
-  }));
+export const useTetris = ({ onGameEnd, onStateUpdate }: UseTetrisProps) => {
+  const [state, setState] = useState<TetrisState>(() => createInitialState(false));
 
   const onGameEndRef = useRef(onGameEnd);
   const onStateUpdateRef = useRef(onStateUpdate);
@@ -161,55 +171,94 @@ export const useTetris = ({ onGameEnd, onStateUpdate }: UseTetrisProps) => {
     return false;
   }, []);
 
-  // T-SPIN判定 (3-Corner Rule)
-  const checkTSpin = useCallback((piece: Tetromino, currentGrid: Grid, wasRotate: boolean): boolean => {
-    if (piece.type !== 'T' || !wasRotate) return false;
+  // ミノの固定 (着地/ハードドロップ共通)。ライン消去・採点・クリア/ゲームオーバー判定を行う。
+  // 得点は「1列消去につき100点」のみ (計画書5-1)。ボーナス加点は設けない。
+  const lockPiece = useCallback((prev: TetrisState, piece: Tetromino): TetrisState => {
+    const tempGrid = prev.grid.map((row) => [...row]);
+    let isTopOut = false;
 
-    // Tミノの4つの斜め角
-    const corners = [
-      { dx: 0, dy: 0 }, // 左上
-      { dx: 2, dy: 0 }, // 右上
-      { dx: 0, dy: 2 }, // 左下
-      { dx: 2, dy: 2 }, // 右下
-    ];
+    for (let y = 0; y < piece.matrix.length; y++) {
+      for (let x = 0; x < piece.matrix[y].length; x++) {
+        if (piece.matrix[y][x]) {
+          const boardY = piece.position.y + y;
+          const boardX = piece.position.x + x;
 
-    let occupiedCount = 0;
-    for (const corner of corners) {
-      const x = piece.position.x + corner.dx;
-      const y = piece.position.y + corner.dy;
-
-      // 盤面外（壁や底）はブロックがあるとみなす
-      if (x < 0 || x >= COLS || y >= ROWS) {
-        occupiedCount++;
-      } else if (y >= 0 && currentGrid[y][x] !== '') {
-        occupiedCount++;
+          if (boardY < 0) {
+            isTopOut = true;
+          } else if (boardY < ROWS && boardX >= 0 && boardX < COLS) {
+            tempGrid[boardY][boardX] = piece.color;
+          }
+        }
       }
     }
 
-    return occupiedCount >= 3;
-  }, []);
+    if (isTopOut) {
+      return { ...prev, gameOver: true, gameStarted: false, endReason: 'gameover' };
+    }
+
+    let cleared = 0;
+    const filteredGrid = tempGrid.filter((row) => {
+      const isFull = row.every((cell) => cell !== '');
+      if (isFull) cleared++;
+      return !isFull;
+    });
+
+    while (filteredGrid.length < ROWS) {
+      filteredGrid.unshift(Array(COLS).fill(''));
+    }
+
+    const nextScore = prev.score + cleared * POINTS_PER_LINE;
+    const nextLines = prev.linesCleared + cleared;
+    const actionMsg = LINE_CLEAR_MESSAGES[cleared] ?? '';
+    const messageState = {
+      actionMessage: actionMsg || prev.actionMessage,
+      messageTrigger: actionMsg ? Date.now() : prev.messageTrigger,
+    };
+
+    // 目標点に到達した時点でクリア (残り時間があってもその場で終了)
+    if (nextScore >= CLEAR_SCORE) {
+      return {
+        ...prev,
+        grid: filteredGrid,
+        score: nextScore,
+        linesCleared: nextLines,
+        gameOver: true,
+        gameStarted: false,
+        endReason: 'cleared',
+        ...messageState,
+      };
+    }
+
+    // 初期位置での衝突＝ゲームオーバー
+    if (checkCollision(prev.nextPiece, filteredGrid)) {
+      return {
+        ...prev,
+        grid: filteredGrid,
+        score: nextScore,
+        linesCleared: nextLines,
+        gameOver: true,
+        gameStarted: false,
+        endReason: 'gameover',
+      };
+    }
+
+    const drawn = drawFromBag(prev.bag);
+
+    return {
+      ...prev,
+      grid: filteredGrid,
+      currentPiece: prev.nextPiece,
+      nextPiece: drawn.piece,
+      bag: drawn.bag,
+      score: nextScore,
+      linesCleared: nextLines,
+      ...messageState,
+    };
+  }, [checkCollision]);
 
   // ゲームの初期化/開始
   const startGame = useCallback(() => {
-    // 新しいゲームごとに袋をリセットし、毎回同じ条件でスタートできるようにする
-    pieceBagRef.current = createPieceBag();
-    const firstPiece = pieceBagRef.current.next();
-    const secondPiece = pieceBagRef.current.next();
-
-    setState({
-      grid: createEmptyGrid(),
-      currentPiece: firstPiece,
-      nextPiece: secondPiece,
-      score: 0,
-      linesCleared: 0,
-      gameOver: false,
-      gameStarted: true,
-      timeLeft: 120,
-      comboCount: -1,
-      lastActionWasRotate: false,
-      actionMessage: 'START!',
-      messageTrigger: Date.now(),
-    });
+    setState(createInitialState(true));
   }, []);
 
   // ミノの回転
@@ -234,11 +283,7 @@ export const useTetris = ({ onGameEnd, onStateUpdate }: UseTetrisProps) => {
           position: { ...rotatedPiece.position, x: rotatedPiece.position.x + kick },
         };
         if (!checkCollision(shiftedPiece, prev.grid)) {
-          return {
-            ...prev,
-            currentPiece: shiftedPiece,
-            lastActionWasRotate: true, // 回転成功
-          };
+          return { ...prev, currentPiece: shiftedPiece };
         }
       }
 
@@ -254,9 +299,7 @@ export const useTetris = ({ onGameEnd, onStateUpdate }: UseTetrisProps) => {
         ...prev.currentPiece,
         position: { ...prev.currentPiece.position, x: prev.currentPiece.position.x - 1 },
       };
-      return checkCollision(nextPiece, prev.grid)
-        ? prev
-        : { ...prev, currentPiece: nextPiece, lastActionWasRotate: false };
+      return checkCollision(nextPiece, prev.grid) ? prev : { ...prev, currentPiece: nextPiece };
     });
   }, [checkCollision]);
 
@@ -268,13 +311,11 @@ export const useTetris = ({ onGameEnd, onStateUpdate }: UseTetrisProps) => {
         ...prev.currentPiece,
         position: { ...prev.currentPiece.position, x: prev.currentPiece.position.x + 1 },
       };
-      return checkCollision(nextPiece, prev.grid)
-        ? prev
-        : { ...prev, currentPiece: nextPiece, lastActionWasRotate: false };
+      return checkCollision(nextPiece, prev.grid) ? prev : { ...prev, currentPiece: nextPiece };
     });
   }, [checkCollision]);
 
-  // 下移動 (自動落下およびソフトドロップ)
+  // 下移動 (自動落下および「下に落とす」操作)
   const moveDown = useCallback(() => {
     setState((prev) => {
       if (!prev.gameStarted || prev.gameOver) return prev;
@@ -286,137 +327,14 @@ export const useTetris = ({ onGameEnd, onStateUpdate }: UseTetrisProps) => {
 
       // 衝突＝着地
       if (checkCollision(nextPiece, prev.grid)) {
-        const tempGrid = prev.grid.map((row) => [...row]);
-        let isTopOut = false;
-
-        for (let y = 0; y < prev.currentPiece.matrix.length; y++) {
-          for (let x = 0; x < prev.currentPiece.matrix[y].length; x++) {
-            if (prev.currentPiece.matrix[y][x]) {
-              const boardY = prev.currentPiece.position.y + y;
-              const boardX = prev.currentPiece.position.x + x;
-
-              if (boardY < 0) {
-                isTopOut = true;
-              } else if (boardY < ROWS && boardX >= 0 && boardX < COLS) {
-                tempGrid[boardY][boardX] = prev.currentPiece.color;
-              }
-            }
-          }
-        }
-
-        if (isTopOut) {
-          return {
-            ...prev,
-            gameOver: true,
-            gameStarted: false,
-          };
-        }
-
-        // T-SPIN判定
-        const isTSpin = checkTSpin(prev.currentPiece, prev.grid, prev.lastActionWasRotate);
-
-        // ライン消去判定
-        let cleared = 0;
-        const filteredGrid = tempGrid.filter((row) => {
-          const isFull = row.every((cell) => cell !== '');
-          if (isFull) cleared++;
-          return !isFull;
-        });
-
-        while (filteredGrid.length < ROWS) {
-          filteredGrid.unshift(Array(COLS).fill(''));
-        }
-
-        // スコア計算 ＆ メッセージ生成
-        let addedScore = 0;
-        let actionMsg = '';
-
-        if (isTSpin) {
-          if (cleared === 0) {
-            addedScore = 400;
-            actionMsg = 'T-SPIN';
-          } else if (cleared === 1) {
-            addedScore = 800;
-            actionMsg = 'T-SPIN SINGLE';
-          } else if (cleared === 2) {
-            addedScore = 1200;
-            actionMsg = 'T-SPIN DOUBLE!';
-          } else if (cleared === 3) {
-            addedScore = 1600;
-            actionMsg = 'T-SPIN TRIPLE!!';
-          }
-        } else {
-          if (cleared === 1) {
-            addedScore = 100;
-            actionMsg = 'SINGLE';
-          } else if (cleared === 2) {
-            addedScore = 300;
-            actionMsg = 'DOUBLE!';
-          } else if (cleared === 3) {
-            addedScore = 500;
-            actionMsg = 'TRIPLE!!';
-          } else if (cleared === 4) {
-            addedScore = 1000;
-            actionMsg = 'TETRIS!!!';
-          }
-        }
-
-        // COMBOの適用
-        let nextCombo = prev.comboCount;
-        if (cleared > 0) {
-          nextCombo++;
-          if (nextCombo >= 1) {
-            addedScore += nextCombo * 50;
-            actionMsg += ` + ${nextCombo} COMBO`;
-          }
-        } else {
-          nextCombo = -1; // ラインを消していないのでコンボリセット
-        }
-
-        const nextScore = prev.score + addedScore;
-        const nextLines = prev.linesCleared + cleared;
-
-        // 次のピースセット
-        const next = prev.nextPiece;
-        const upcoming = pieceBagRef.current.next();
-
-        // 初期位置での衝突＝ゲームオーバー
-        if (checkCollision(next, filteredGrid)) {
-          return {
-            ...prev,
-            grid: filteredGrid,
-            score: nextScore,
-            linesCleared: nextLines,
-            gameOver: true,
-            gameStarted: false,
-          };
-        }
-
-        return {
-          ...prev,
-          grid: filteredGrid,
-          currentPiece: next,
-          nextPiece: upcoming,
-          score: nextScore,
-          linesCleared: nextLines,
-          comboCount: nextCombo,
-          lastActionWasRotate: false,
-          // アクションがあった場合のみメッセージトリガーを更新
-          actionMessage: actionMsg || prev.actionMessage,
-          messageTrigger: actionMsg ? Date.now() : prev.messageTrigger,
-        };
+        return lockPiece(prev, prev.currentPiece);
       }
 
-      // 衝突なし
-      return {
-        ...prev,
-        currentPiece: nextPiece,
-        lastActionWasRotate: false,
-      };
+      return { ...prev, currentPiece: nextPiece };
     });
-  }, [checkCollision, checkTSpin]);
+  }, [checkCollision, lockPiece]);
 
-  // ハードドロップ
+  // 「より速く下に落とす」(一気に最下段まで落として固定)
   const hardDrop = useCallback(() => {
     setState((prev) => {
       if (!prev.gameStarted || prev.gameOver) return prev;
@@ -433,124 +351,12 @@ export const useTetris = ({ onGameEnd, onStateUpdate }: UseTetrisProps) => {
         currentY++;
       }
 
-      const tempGrid = prev.grid.map((row) => [...row]);
-      let isTopOut = false;
-
-      for (let y = 0; y < prev.currentPiece.matrix.length; y++) {
-        for (let x = 0; x < prev.currentPiece.matrix[y].length; x++) {
-          if (prev.currentPiece.matrix[y][x]) {
-            const boardY = currentY + y;
-            const boardX = prev.currentPiece.position.x + x;
-
-            if (boardY < 0) {
-              isTopOut = true;
-            } else if (boardY < ROWS && boardX >= 0 && boardX < COLS) {
-              tempGrid[boardY][boardX] = prev.currentPiece.color;
-            }
-          }
-        }
-      }
-
-      if (isTopOut) {
-        return {
-          ...prev,
-          gameOver: true,
-          gameStarted: false,
-        };
-      }
-
-      // T-SPIN判定 (ハードドロップ直前が回転だったか)
-      const isTSpin = checkTSpin(prev.currentPiece, prev.grid, prev.lastActionWasRotate);
-
-      // ライン消去
-      let cleared = 0;
-      const filteredGrid = tempGrid.filter((row) => {
-        const isFull = row.every((cell) => cell !== '');
-        if (isFull) cleared++;
-        return !isFull;
+      return lockPiece(prev, {
+        ...prev.currentPiece,
+        position: { ...prev.currentPiece.position, y: currentY },
       });
-
-      while (filteredGrid.length < ROWS) {
-        filteredGrid.unshift(Array(COLS).fill(''));
-      }
-
-      // スコア計算 ＆ メッセージ生成
-      let addedScore = 0;
-      let actionMsg = '';
-
-      if (isTSpin) {
-        if (cleared === 0) {
-          addedScore = 400;
-          actionMsg = 'T-SPIN';
-        } else if (cleared === 1) {
-          addedScore = 800;
-          actionMsg = 'T-SPIN SINGLE';
-        } else if (cleared === 2) {
-          addedScore = 1200;
-          actionMsg = 'T-SPIN DOUBLE!';
-        } else if (cleared === 3) {
-          addedScore = 1600;
-          actionMsg = 'T-SPIN TRIPLE!!';
-        }
-      } else {
-        if (cleared === 1) {
-          addedScore = 100;
-          actionMsg = 'SINGLE';
-        } else if (cleared === 2) {
-          addedScore = 300;
-          actionMsg = 'DOUBLE!';
-        } else if (cleared === 3) {
-          addedScore = 500;
-          actionMsg = 'TRIPLE!!';
-        } else if (cleared === 4) {
-          addedScore = 1000;
-          actionMsg = 'TETRIS!!!';
-        }
-      }
-
-      // COMBOの適用
-      let nextCombo = prev.comboCount;
-      if (cleared > 0) {
-        nextCombo++;
-        if (nextCombo >= 1) {
-          addedScore += nextCombo * 50;
-          actionMsg += ` + ${nextCombo} COMBO`;
-        }
-      } else {
-        nextCombo = -1;
-      }
-
-      const nextScore = prev.score + addedScore;
-      const nextLines = prev.linesCleared + cleared;
-
-      const next = prev.nextPiece;
-      const upcoming = pieceBagRef.current.next();
-
-      if (checkCollision(next, filteredGrid)) {
-        return {
-          ...prev,
-          grid: filteredGrid,
-          score: nextScore,
-          linesCleared: nextLines,
-          gameOver: true,
-          gameStarted: false,
-        };
-      }
-
-      return {
-        ...prev,
-        grid: filteredGrid,
-        currentPiece: next,
-        nextPiece: upcoming,
-        score: nextScore,
-        linesCleared: nextLines,
-        comboCount: nextCombo,
-        lastActionWasRotate: false,
-        actionMessage: actionMsg || prev.actionMessage,
-        messageTrigger: actionMsg ? Date.now() : prev.messageTrigger,
-      };
     });
-  }, [checkCollision, checkTSpin]);
+  }, [checkCollision, lockPiece]);
 
   // 1. 自動落下タイマー
   useEffect(() => {
@@ -563,19 +369,20 @@ export const useTetris = ({ onGameEnd, onStateUpdate }: UseTetrisProps) => {
     return () => clearInterval(id);
   }, [state.gameStarted, state.gameOver, moveDown]);
 
-  // 2. 制限時間タイマー (120秒)
+  // 2. 制限時間タイマー
   useEffect(() => {
     if (!state.gameStarted || state.gameOver) return;
 
     const id = setInterval(() => {
       setState((prev) => {
+        if (!prev.gameStarted || prev.gameOver) return prev;
         if (prev.timeLeft <= 1) {
-          clearInterval(id);
           return {
             ...prev,
             timeLeft: 0,
             gameOver: true,
             gameStarted: false,
+            endReason: 'timeout',
           };
         }
         return {
@@ -593,14 +400,13 @@ export const useTetris = ({ onGameEnd, onStateUpdate }: UseTetrisProps) => {
   useEffect(() => {
     if (state.gameOver && !prevGameOverRef.current) {
       prevGameOverRef.current = true;
-      const reason = state.timeLeft <= 0 ? 'timeout' : 'gameover';
-      onGameEndRef.current(reason, state.score, state.linesCleared);
+      onGameEndRef.current(state.endReason ?? 'gameover', state.score, state.linesCleared);
     }
-    
+
     if (!state.gameOver) {
       prevGameOverRef.current = false;
     }
-  }, [state.gameOver, state.timeLeft, state.score, state.linesCleared]);
+  }, [state.gameOver, state.endReason, state.score, state.linesCleared]);
 
   // 4. ゲーム中リアルタイム状態更新の副作用検知
   useEffect(() => {
@@ -619,10 +425,11 @@ export const useTetris = ({ onGameEnd, onStateUpdate }: UseTetrisProps) => {
     linesCleared: state.linesCleared,
     gameOver: state.gameOver,
     gameStarted: state.gameStarted,
+    endReason: state.endReason,
     timeLeft: state.timeLeft,
     actionMessage: state.actionMessage,
     messageTrigger: state.messageTrigger,
-    success: state.score >= 500,
+    success: state.score >= CLEAR_SCORE,
     startGame,
     moveLeft,
     moveRight,

@@ -1,11 +1,13 @@
 import React from 'react';
 import { Play, AlertCircle, CheckCircle } from 'lucide-react';
+import type { GameEndReason } from '../../hooks/useTetris';
+import { CLEAR_LINES, CLEAR_SCORE, TIME_LIMIT_SECONDS } from '../../config/gameConfig';
 
 interface GameOverlayProps {
   gameStarted: boolean;
   gameOver: boolean;
   score: number;
-  timeLeft: number;
+  endReason: GameEndReason | null;
   success: boolean;
   onStart: () => void;
   savingData: boolean;
@@ -15,7 +17,7 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({
   gameStarted,
   gameOver,
   score,
-  timeLeft,
+  endReason,
   success,
   onStart,
   savingData,
@@ -34,8 +36,8 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({
           <div className="space-y-2">
             <h3 className="text-2xl font-bold text-white tracking-wide">テトリス型パズル実験</h3>
             <p className="text-sm text-slate-400 font-sans">
-              制限時間は2分（120秒）です。<br />
-              500点（5ライン消去相当）以上でクリアとなります。<br />
+              制限時間は{TIME_LIMIT_SECONDS}秒です。<br />
+              {CLEAR_SCORE}点（{CLEAR_LINES}ライン消去）に到達した時点でクリアとなります。<br />
               ゲーム開始ボタンを押すと即座にスタートします。
             </p>
           </div>
@@ -64,11 +66,15 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({
           </div>
 
           <div className="space-y-2">
-            <h3 className="text-3xl font-extrabold text-white">
-              {timeLeft <= 0 ? 'TIME UP!' : 'GAME OVER'}
+            <h3 className={`text-3xl font-extrabold ${endReason === 'cleared' ? 'text-emerald-400' : 'text-white'}`}>
+              {endReason === 'cleared' ? 'CLEAR!' : endReason === 'timeout' ? 'TIME UP!' : 'GAME OVER'}
             </h3>
             <p className="text-slate-400 text-sm">
-              {timeLeft <= 0 ? '制限時間（2分）が経過しました。' : 'ブロックが最上部に達しました。'}
+              {endReason === 'cleared'
+                ? `${CLEAR_SCORE}点を達成しました！`
+                : endReason === 'timeout'
+                  ? `制限時間（${TIME_LIMIT_SECONDS}秒）が経過しました。`
+                  : 'ブロックが最上部に達しました。'}
             </p>
           </div>
 
@@ -76,7 +82,7 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({
             <div className="text-xs text-slate-500 uppercase tracking-wider">最終スコア</div>
             <div className="text-4xl font-extrabold font-display text-white">{score} 点</div>
             <div className="text-xs text-slate-400">
-              目標: 500点 / 結果:{' '}
+              目標: {CLEAR_SCORE}点 / 結果:{' '}
               <span className={success ? 'text-emerald-400 font-bold' : 'text-red-400 font-bold'}>
                 {success ? 'クリア成功' : 'クリア失敗'}
               </span>

@@ -1,5 +1,6 @@
 import React from 'react';
 import { Trophy, ArrowRight, CheckCircle, AlertTriangle } from 'lucide-react';
+import { CLEAR_SCORE } from '../../config/gameConfig';
 
 interface ResultScreenProps {
   playerId: string;
@@ -72,7 +73,7 @@ export const ResultScreen: React.FC<ResultScreenProps> = ({
               {score} 点
             </div>
             <div className="text-[11px] text-slate-500">
-              目標スコア: 500点
+              目標スコア: {CLEAR_SCORE}点
             </div>
           </div>
         </div>

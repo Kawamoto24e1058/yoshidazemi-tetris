@@ -2,9 +2,19 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useFirestore } from '../../hooks/useFirestore';
 import { GameScreen } from './GameScreen';
 import { ResultScreen } from './ResultScreen';
+import { TIME_LIMIT_SECONDS } from '../../config/gameConfig';
 import { Play, Sparkles, Settings, Users, Shuffle, RefreshCw, Loader2 } from 'lucide-react';
 
 type FlowState = 'login' | 'game' | 'result';
+type Group = 'A' | 'B' | 'C';
+
+// 割り当て済みグループをこのブラウザにも控えておく。
+// DB側の記録が取れない/書けなかった場合でも、同じプレイヤーのグループが変わらないようにするため。
+const groupMemoryKey = (id: string) => `tetris_group_${id}`;
+const readRememberedGroup = (id: string): Group | null => {
+  const v = localStorage.getItem(groupMemoryKey(id));
+  return v === 'A' || v === 'B' || v === 'C' ? v : null;
+};
 
 export const PlayerFlow: React.FC = () => {
   const { generatePlayerId, getPlayerHistory, createPlayerRecord } = useFirestore();
@@ -33,6 +43,8 @@ export const PlayerFlow: React.FC = () => {
   const [previousGroup, setPreviousGroup] = useState<'A' | 'B' | 'C' | null>(null);
   const [playNumber, setPlayNumber] = useState<number>(1);
   const [loadingHistory, setLoadingHistory] = useState<boolean>(false);
+  const [historyError, setHistoryError] = useState<boolean>(false);
+  const [historyReloadKey, setHistoryReloadKey] = useState<number>(0);
 
   // ゲーム結果の保持
   const [gameResult, setGameResult] = useState<{ score: number; success: boolean } | null>(null);
@@ -49,6 +61,9 @@ export const PlayerFlow: React.FC = () => {
     if (isInitializingRef.current) return;
     isInitializingRef.current = true;
     setLoadingId(true);
+    setPreviousGroup(null);
+    setPlayNumber(1);
+    setLoadingHistory(true);
 
     try {
       const newId = await generatePlayerId();
@@ -77,37 +92,42 @@ export const PlayerFlow: React.FC = () => {
     }
   }, [flowState, initPlayerId]);
 
-  // プレイヤーIDが確定/変更されるたびに過去データ（初回グループ・通算プレイ回数）を取得
+  // ログイン画面が表示されるたび（プレイ終了後に戻ってきた時を含む）に、
+  // 過去データ（初回グループ・通算プレイ回数）を取り直す。
+  // 取得が終わるまで・失敗した間は開始できないようにし、グループの再抽選を防ぐ。
   useEffect(() => {
-    if (!playerId || loadingId) return;
+    if (flowState !== 'login' || !playerId || loadingId) return;
 
     let cancelled = false;
     setLoadingHistory(true);
+    setHistoryError(false);
 
     getPlayerHistory(playerId)
       .then((history) => {
         if (cancelled) return;
-        setPreviousGroup(history.group);
+        const group = history.group ?? readRememberedGroup(playerId);
+        setPreviousGroup(group);
         setPlayNumber(history.playNumber);
-        if (history.group) {
-          setFinalGroup(history.group);
+        if (group) {
+          setFinalGroup(group);
         }
+        setLoadingHistory(false);
       })
       .catch((error) => {
         console.error('Failed to fetch player history:', error);
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingHistory(false);
+        if (cancelled) return;
+        setHistoryError(true);
+        setLoadingHistory(false);
       });
 
     return () => {
       cancelled = true;
     };
-  }, [playerId, loadingId, getPlayerHistory]);
+  }, [flowState, playerId, loadingId, getPlayerHistory, historyReloadKey]);
 
   // スタートボタン押下処理
   const handleStartGame = async () => {
-    if (!playerId.trim()) return;
+    if (!playerId.trim() || loadingHistory || historyError) return;
 
     // 同一プレイヤーIDの過去プレイがある場合は、初回に割り当てられたグループを引き継ぐ
     let group: 'A' | 'B' | 'C';
@@ -121,6 +141,7 @@ export const PlayerFlow: React.FC = () => {
     }
 
     setFinalGroup(group);
+    localStorage.setItem(groupMemoryKey(playerId.trim()), group);
 
     try {
       // Firestoreに初期プレイヤーデータを登録し、sessionDocId を取得
@@ -149,8 +170,11 @@ export const PlayerFlow: React.FC = () => {
   const handleRestart = () => {
     setGameResult(null);
     setSessionDocId('');
+    setLoadingHistory(true);
     setFlowState('login');
   };
+
+  const startDisabled = !playerId.trim() || loadingId || loadingHistory || historyError;
 
   return (
     <div className="w-full min-h-[90vh] flex items-center justify-center">
@@ -296,11 +320,23 @@ export const PlayerFlow: React.FC = () => {
 
           {/* 実験への同意とスタートボタン */}
           <div className="space-y-4">
+            {historyError && (
+              <div className="p-3 bg-red-950/30 border border-red-900/50 rounded-xl text-center text-xs text-red-300 space-y-2">
+                <div>プレイ履歴の確認に失敗しました。通信状況を確認して再試行してください。</div>
+                <button
+                  type="button"
+                  onClick={() => setHistoryReloadKey((k) => k + 1)}
+                  className="px-3 py-1 bg-red-900/40 hover:bg-red-900/60 border border-red-800/60 rounded-lg font-bold cursor-pointer"
+                >
+                  再試行
+                </button>
+              </div>
+            )}
             <button
               onClick={handleStartGame}
-              disabled={!playerId.trim()}
+              disabled={startDisabled}
               className={`w-full py-4.5 px-6 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 font-extrabold rounded-2xl shadow-[0_0_25px_rgba(6,182,212,0.3)] transition-all hover:scale-[1.01] active:scale-[0.99] flex items-center justify-center gap-2 text-lg ${
-                !playerId.trim()
+                startDisabled
                   ? 'opacity-40 cursor-not-allowed'
                   : 'cursor-pointer'
               }`}
@@ -309,7 +345,7 @@ export const PlayerFlow: React.FC = () => {
               実験ゲームを開始する
             </button>
             <div className="text-center text-[10px] text-slate-500 leading-relaxed font-sans">
-              ※開始ボタンを押すと、2分（120秒）の制限時間付きパズルゲームが始まります。<br />
+              ※開始ボタンを押すと、{TIME_LIMIT_SECONDS}秒の制限時間付きパズルゲームが始まります。<br />
               キーボード入力（矢印キー、Zキー、Spaceキー）を使用するため、PCでの操作を行ってください。
             </div>
           </div>

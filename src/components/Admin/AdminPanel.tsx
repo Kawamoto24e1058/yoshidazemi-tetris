@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { useFirestore } from '../../hooks/useFirestore';
+import { useFirestore, withEffectiveStatus } from '../../hooks/useFirestore';
 import type { PlayerRecord } from '../../hooks/useFirestore';
+import { CLEAR_SCORE, TIME_LIMIT_SECONDS } from '../../config/gameConfig';
 import { isFirebaseConfigured } from '../../config/firebase';
 import { Board } from '../Game/Board';
 import type { Tetromino } from '../../types/tetris';
@@ -56,7 +57,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
       return;
     }
     const unsubscribe = subscribeSinglePlayer(selectedSessionDocId, (data) => {
-      setSelectedPlayerData(data);
+      setSelectedPlayerData(data ? withEffectiveStatus(data) : null);
     });
     return () => unsubscribe();
   }, [selectedSessionDocId, subscribeSinglePlayer]);
@@ -66,7 +67,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
     setLoadingData(true);
     try {
       const data = await fetchAllPlayersData();
-      setHistoricalData(data);
+      setHistoricalData(data.map(withEffectiveStatus));
     } catch (e) {
       console.error(e);
     } finally {
@@ -116,7 +117,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
       p.score,
       p.linesCleared,
       p.success ? '成功' : '失敗',
-      p.endReason === 'timeout' ? '時間切れ' : p.endReason === 'gameover' ? '積み上がり' : p.endReason === 'disconnected' ? '離脱' : ''
+      p.endReason === 'cleared' ? 'クリア達成' : p.endReason === 'timeout' ? '時間切れ' : p.endReason === 'gameover' ? '積み上がり' : p.endReason === 'disconnected' ? '離脱' : ''
     ]);
 
     const csvContent = [
@@ -244,10 +245,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
 
             <div className="glass-panel p-6 rounded-2xl flex items-center justify-between">
               <div className="space-y-1">
-                <span className="text-xs text-slate-500 font-semibold uppercase tracking-wider">クリア目安到達 (500点超)</span>
+                <span className="text-xs text-slate-500 font-semibold uppercase tracking-wider">クリア条件 (制限時間 {TIME_LIMIT_SECONDS}秒)</span>
                 <div className="text-4xl font-extrabold text-emerald-400 font-display flex items-baseline gap-1">
-                  {activePlayers.filter(p => p.score >= 500).length}
-                  <span className="text-xs text-slate-400 font-normal">名</span>
+                  {CLEAR_SCORE}
+                  <span className="text-xs text-slate-400 font-normal">点到達</span>
                 </div>
               </div>
               <div className="w-12 h-12 bg-emerald-500/10 rounded-xl border border-emerald-500/20 flex items-center justify-center text-emerald-400">
@@ -307,13 +308,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                     {/* クリア目標進捗バー */}
                     <div className="space-y-1.5">
                       <div className="flex justify-between text-[10px] text-slate-500">
-                        <span>目標進捗 (500点)</span>
-                        <span>{Math.min(100, (player.score / 500) * 100).toFixed(0)}%</span>
+                        <span>目標進捗 ({CLEAR_SCORE}点)</span>
+                        <span>{Math.min(100, (player.score / CLEAR_SCORE) * 100).toFixed(0)}%</span>
                       </div>
                       <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden">
                         <div
                           className="h-full bg-cyan-500 transition-all duration-300 rounded-full"
-                          style={{ width: `${Math.min(100, (player.score / 500) * 100)}%` }}
+                          style={{ width: `${Math.min(100, (player.score / CLEAR_SCORE) * 100)}%` }}
                         />
                       </div>
                     </div>
@@ -448,6 +449,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                           )}
                         </td>
                         <td className="py-4 px-6 text-slate-400">
+                          {p.endReason === 'cleared' && 'クリア達成'}
                           {p.endReason === 'timeout' && '時間切れ'}
                           {p.endReason === 'gameover' && '積み上がり'}
                           {p.endReason === 'disconnected' && '離脱'}
@@ -536,7 +538,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                 <div className="p-3 bg-slate-950/30 rounded-xl border border-slate-950">
                   <div className="text-[9px] text-slate-500 uppercase">残り時間</div>
                   <div className="text-lg font-bold font-display text-white">
-                    {selectedPlayerData?.timeLeft ?? 120}秒
+                    {selectedPlayerData?.timeLeft ?? TIME_LIMIT_SECONDS}秒
                   </div>
                 </div>
               </div>

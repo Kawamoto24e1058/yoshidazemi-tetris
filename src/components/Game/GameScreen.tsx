@@ -2,7 +2,9 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { Board } from './Board';
 import { GameOverlay } from './GameOverlay';
 import { useTetris } from '../../hooks/useTetris';
+import type { GameEndReason } from '../../hooks/useTetris';
 import { useFirestore } from '../../hooks/useFirestore';
+import { CLEAR_SCORE } from '../../config/gameConfig';
 import { Clock, Trophy, Award, Keyboard, Flame } from 'lucide-react';
 import type { Tetromino } from '../../types/tetris';
 
@@ -32,7 +34,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
 
   // ゲーム終了コールバック
   const handleGameEnd = useCallback(async (
-    reason: 'timeout' | 'gameover',
+    reason: GameEndReason,
     finalScore: number,
     lines: number
   ) => {
@@ -40,7 +42,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
     isFinalizingRef.current = true;
     
     setSavingData(true);
-    const success = finalScore >= 500;
+    const success = finalScore >= CLEAR_SCORE;
     
     try {
       await finalizePlayerRecord(sessionDocId, finalScore, lines, reason, success);
@@ -65,6 +67,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
     gameOver,
     gameStarted,
     timeLeft,
+    endReason,
     actionMessage,
     messageTrigger,
     success,
@@ -238,8 +241,8 @@ export const GameScreen: React.FC<GameScreenProps> = ({
     );
   };
 
-  // スコアが500点(クリア目標)に到達するまでの進捗(%)
-  const progressPercent = Math.min(100, (score / 500) * 100);
+  // クリア目標点に到達するまでの進捗(%)
+  const progressPercent = Math.min(100, (score / CLEAR_SCORE) * 100);
 
   return (
     <div className="flex flex-col items-center justify-center min-h-[90vh] py-8 px-4 font-sans select-none">
@@ -295,7 +298,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
             {/* 進捗プログレス */}
             <div className="space-y-2 pt-2 border-t border-slate-800">
               <div className="flex justify-between text-xs">
-                <span className="text-slate-400">クリア目標 (500点)</span>
+                <span className="text-slate-400">クリア目標 ({CLEAR_SCORE}点)</span>
                 <span className={`font-bold ${success ? 'text-emerald-400' : 'text-cyan-400'}`}>
                   {progressPercent.toFixed(0)}%
                 </span>
@@ -344,7 +347,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
               gameStarted={gameStarted}
               gameOver={gameOver}
               score={score}
-              timeLeft={timeLeft}
+              endReason={endReason}
               success={success}
               onStart={startGame}
               savingData={savingData}
